@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chenchun.lease-tracker</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/chenchun/Documents/Codex/2026-06-17/files-mentioned-by-the-user-south</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>python3 tracker.py run-once</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/chenchun/Documents/Codex/2026-06-17/files-mentioned-by-the-user-south/logs/lease-tracker.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/chenchun/Documents/Codex/2026-06-17/files-mentioned-by-the-user-south/logs/lease-tracker.err.log</string>
+</dict>
+</plist>

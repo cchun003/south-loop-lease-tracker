@@ -1,0 +1,36 @@
+name: Lease Tracker
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron is UTC. This approximates frequent daytime checks for Chicago in CDT.
+    - cron: "13,43 12-23 * * *"
+    - cron: "13,43 0-4 * * *"
+    - cron: "17 5-11/2 * * *"
+
+concurrency:
+  group: lease-tracker
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run tracker
+        run: python tracker.py run-once
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_ENABLED: ${{ vars.DEEPSEEK_ENABLED || '0' }}
