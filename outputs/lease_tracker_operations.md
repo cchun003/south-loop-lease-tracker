@@ -8,6 +8,7 @@
 - Alerts: new unit, price drop, availability-date change, status change, or alert-level upgrade/new qualifying unit.
 - Backup sources are included, but official sources are preferred when both exist.
 - Blocked/challenged pages are logged instead of bypassed.
+- `Source_Status` records each configured source as `ok`, `ok_no_units`, `manual_check`, or `blocked:*`.
 
 ## Local Commands
 
@@ -52,6 +53,8 @@ Normal production run:
 ```bash
 python3 tracker.py run-once
 ```
+
+Source health is visible in the `Source_Status` tab. Manual-check links are intentionally not fetched by the tracker.
 
 ## Environment
 
@@ -137,3 +140,4 @@ launchctl unload ~/Library/LaunchAgents/com.chenchun.lease-tracker.plist
 - It records Cloudflare/403/429 pages as blocked instead of attempting to bypass them.
 - It does not automate 小红书, Facebook, Reddit login sessions, or high-risk browser scraping in the production loop.
 - Social-media findings are folded into building risk tags and notes; lease availability comes from official/backup apartment listing sources.
+- Manual-check backup links are stored for blocked sources, but the tracker does not use proxy rotation, CAPTCHA solving, or challenge bypass.

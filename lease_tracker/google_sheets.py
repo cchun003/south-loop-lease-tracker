@@ -101,6 +101,22 @@ class GoogleSheetsClient:
             body = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Google Sheets API HTTP {exc.code}: {body}") from exc
 
+    def metadata(self) -> dict[str, Any]:
+        params = urllib.parse.urlencode({"fields": "sheets.properties"})
+        return self.request_json("GET", f"?{params}")
+
+    def batch_update(self, requests: list[dict[str, Any]]) -> None:
+        if not requests:
+            return
+        self.request_json("POST", ":batchUpdate", {"requests": requests})
+
+    def ensure_sheet(self, title: str) -> None:
+        metadata = self.metadata()
+        existing = {sheet["properties"]["title"] for sheet in metadata.get("sheets", [])}
+        if title in existing:
+            return
+        self.batch_update([{"addSheet": {"properties": {"title": title}}}])
+
     def values_get(self, a1_range: str) -> list[list[str]]:
         encoded = urllib.parse.quote(a1_range, safe="")
         data = self.request_json("GET", f"/values/{encoded}")
@@ -145,4 +161,3 @@ def rows_to_dicts(rows: list[list[str]]) -> list[dict[str, str]]:
             item[header] = str(row[idx]) if idx < len(row) else ""
         out.append(item)
     return out
-

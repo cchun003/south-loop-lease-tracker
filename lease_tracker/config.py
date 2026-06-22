@@ -66,6 +66,12 @@ BUILDINGS = [
                 "url": "https://www.apartments.com/1401-s-state-chicago-il/4nfye8j/",
                 "parser": "jsonld_floorplans",
             },
+            {
+                "name": "apartmentguide_manual",
+                "type": "manual",
+                "url": "https://www.apartmentguide.com/apartments/Illinois/Chicago/1401-S-State/",
+                "parser": "manual_link",
+            },
         ],
     },
     {
@@ -110,6 +116,12 @@ BUILDINGS = [
                 "url": "https://www.apartments.com/roosevelt-collection-lofts-chicago-il/3w2802d/",
                 "parser": "jsonld_floorplans",
             },
+            {
+                "name": "apartmentguide_manual",
+                "type": "manual",
+                "url": "https://www.apartmentguide.com/apartments/Illinois/Chicago/Roosevelt-Collection-Lofts/",
+                "parser": "manual_link",
+            },
         ],
     },
     {
@@ -138,6 +150,12 @@ BUILDINGS = [
                 "url": "https://www.redfin.com/IL/Chicago/Aspire/apartment/178606257",
                 "parser": "jsonld_floorplans",
             },
+            {
+                "name": "apartmentguide_manual",
+                "type": "manual",
+                "url": "https://www.apartmentguide.com/apartments/Illinois/Chicago/Aspire/",
+                "parser": "manual_link",
+            },
         ],
     },
     {
@@ -159,6 +177,12 @@ BUILDINGS = [
                 "type": "backup",
                 "url": "https://www.apartments.com/arrive-lex-chicago-il/qv2k7sy/",
                 "parser": "jsonld_floorplans",
+            },
+            {
+                "name": "apartmentguide_manual",
+                "type": "manual",
+                "url": "https://www.apartmentguide.com/apartments/Illinois/Chicago/Arrive-LEX/",
+                "parser": "manual_link",
             },
         ],
     },
@@ -214,10 +238,15 @@ BUILDINGS = [
                 "url": "https://www.thegrandcentralapartments.com/floorplans/",
                 "parser": "jsonld_floorplans",
             },
+            {
+                "name": "apartmentguide_manual",
+                "type": "manual",
+                "url": "https://www.apartmentguide.com/apartments/Illinois/Chicago/The-Grand-Central/",
+                "parser": "manual_link",
+            },
         ],
     },
 ]
 
 
 BUILDING_BY_ID = {building["id"]: building for building in BUILDINGS}
-

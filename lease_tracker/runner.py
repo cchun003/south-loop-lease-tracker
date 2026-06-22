@@ -10,7 +10,7 @@ from .deepseek import maybe_summarize_alert
 from .google_sheets import GoogleSheetsClient, rows_to_dicts
 from .http_client import blocked_reason, fetch_url, polite_pause
 from .models import SourceResult, Unit
-from .notifier import build_alert_message, send_wecom_markdown
+from .notifier import build_alert_message, build_source_recovered_message, send_wecom_markdown
 from .parsers import parse_units
 from .settings import HARD_RENT_CAP, PREFERRED_RENT, SHEET_TABS
 
@@ -91,6 +91,23 @@ RUN_LOG_HEADERS = [
     "notes",
 ]
 
+SOURCE_STATUS_HEADERS = [
+    "source_key",
+    "observed_at",
+    "building_id",
+    "building_name",
+    "source_name",
+    "source_type",
+    "parser",
+    "status",
+    "units_found",
+    "target_units_found",
+    "error",
+    "url",
+    "action",
+    "notes",
+]
+
 
 @dataclass
 class TrackerRunResult:
@@ -115,6 +132,20 @@ def fetch_all_sources() -> list[SourceResult]:
     results: list[SourceResult] = []
     for building in BUILDINGS:
         for source in building["sources"]:
+            if source["parser"] == "manual_link":
+                results.append(
+                    SourceResult(
+                        building_id=building["id"],
+                        building_name=building["name"],
+                        source_name=source["name"],
+                        source_type=source["type"],
+                        url=source["url"],
+                        parser=source["parser"],
+                        status="manual_check",
+                        error="Manual-check link; not fetched automatically.",
+                    )
+                )
+                continue
             response = fetch_url(source["url"])
             reason = blocked_reason(response.text, response.status_code)
             if response.error and not response.text:
@@ -187,6 +218,16 @@ def get_existing_units(sheet: GoogleSheetsClient) -> dict[str, dict[str, str]]:
 def get_existing_alert_keys(sheet: GoogleSheetsClient) -> set[str]:
     rows = rows_to_dicts(sheet.values_get(f"{SHEET_TABS['alerts']}!A1:K5000"))
     return {row.get("dedupe_key", "") for row in rows if row.get("dedupe_key")}
+
+
+def get_existing_source_status(sheet: GoogleSheetsClient) -> dict[str, dict[str, str]]:
+    try:
+        rows = rows_to_dicts(sheet.values_get(f"{SHEET_TABS['source_status']}!A1:N1000"))
+    except RuntimeError as exc:
+        if "Source_Status" in str(exc) or "Unable to parse range" in str(exc):
+            return {}
+        raise
+    return {row.get("source_key", ""): row for row in rows if row.get("source_key")}
 
 
 def classify_change(unit: Unit, existing: dict[str, str] | None) -> tuple[str, int | None]:
@@ -325,6 +366,107 @@ def make_dedupe_key(unit: Unit, change_type: str) -> str:
     )
 
 
+def source_key(result: SourceResult) -> str:
+    return f"{result.building_id}:{result.source_name}"
+
+
+def source_action(status: str) -> str:
+    if status == "ok":
+        return "working"
+    if status == "ok_no_units":
+        return "monitor_no_units"
+    if status == "manual_check":
+        return "manual_check"
+    if status.startswith("blocked:"):
+        return "manual_check_do_not_bypass"
+    return "inspect_source"
+
+
+def source_notes(result: SourceResult) -> str:
+    if result.status == "ok":
+        return "Automated source returned parseable availability data."
+    if result.status == "ok_no_units":
+        return "Page loaded, but no parseable unit rows were exposed to the tracker."
+    if result.status == "manual_check":
+        return "Manual-check backup link. The tracker does not fetch this source automatically."
+    if result.status.startswith("blocked:"):
+        return "Blocked by access control or anti-bot response. Logged without bypassing."
+    return "Fetch or parser needs review."
+
+
+def source_status_row(observed_at: str, result: SourceResult) -> list[Any]:
+    target_units = sum(1 for unit in result.units if unit.is_target_layout())
+    return [
+        source_key(result),
+        observed_at,
+        result.building_id,
+        result.building_name,
+        result.source_name,
+        result.source_type,
+        result.parser,
+        result.status,
+        len(result.units),
+        target_units,
+        result.error,
+        result.url,
+        source_action(result.status),
+        source_notes(result),
+    ]
+
+
+def source_recovery_alert_rows(
+    *,
+    observed_at: str,
+    source_results: list[SourceResult],
+    existing_source_status: dict[str, dict[str, str]],
+    existing_alert_keys: set[str],
+    env: dict[str, str],
+    dry_run: bool,
+    send_alerts: bool,
+) -> tuple[list[list[Any]], int]:
+    rows: list[list[Any]] = []
+    sent_count = 0
+    for result in source_results:
+        previous = existing_source_status.get(source_key(result), {})
+        previous_status = previous.get("status", "")
+        recovered_to_units = result.status == "ok" and previous_status and previous_status != "ok"
+        if not recovered_to_units:
+            continue
+        target_units = sum(1 for unit in result.units if unit.is_target_layout())
+        dedupe = f"source_recovered|{source_key(result)}|{previous_status}|{result.status}|{observed_at[:10]}"
+        if dedupe in existing_alert_keys:
+            continue
+        message = build_source_recovered_message(
+            building_name=result.building_name,
+            source_name=result.source_name,
+            previous_status=previous_status,
+            current_status=result.status,
+            units_found=len(result.units),
+            target_units_found=target_units,
+            source_url=result.url,
+        )
+        delivery = "dry_run" if dry_run else "suppressed:no_alerts"
+        if send_alerts and not dry_run:
+            delivery = send_wecom_markdown(env["WECOM_WEBHOOK_URL"], message)
+            sent_count += 1
+        rows.append(
+            [
+                observed_at,
+                "wecom",
+                "source",
+                result.building_id,
+                result.building_name,
+                source_key(result),
+                "source_recovered",
+                message,
+                result.url,
+                delivery,
+                dedupe,
+            ]
+        )
+    return rows, sent_count
+
+
 def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = True) -> TrackerRunResult:
     started = now_iso()
     source_results = fetch_all_sources()
@@ -332,12 +474,15 @@ def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = 
     errors = [
         f"{r.building_name}/{r.source_name}: {r.status} {r.error}".strip()
         for r in source_results
-        if r.status not in {"ok", "ok_no_units"}
+        if r.status not in {"ok", "ok_no_units", "manual_check"}
     ]
 
     sheet = GoogleSheetsClient.from_env(env)
+    if not dry_run:
+        sheet.ensure_sheet(SHEET_TABS["source_status"])
     existing_units = get_existing_units(sheet)
     existing_alert_keys = get_existing_alert_keys(sheet)
+    existing_source_status = get_existing_source_status(sheet)
 
     current_time = now_iso()
     new_count = 0
@@ -391,6 +536,21 @@ def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = 
 
     unavailable_rows = unavailable_existing_rows(existing_units, {u.unit_key for u in units}, current_time)
     current_rows.extend(unavailable_rows)
+    source_status_rows = [SOURCE_STATUS_HEADERS] + [
+        source_status_row(current_time, result) for result in source_results
+    ]
+    source_alert_rows, source_alerts_sent = source_recovery_alert_rows(
+        observed_at=current_time,
+        source_results=source_results,
+        existing_source_status=existing_source_status,
+        existing_alert_keys=existing_alert_keys,
+        env=env,
+        dry_run=dry_run,
+        send_alerts=send_alerts,
+    )
+    if source_alert_rows:
+        alert_rows.extend(source_alert_rows)
+        alerts_sent_count += source_alerts_sent
 
     finished = now_iso()
     status = "ok" if not errors else "ok_with_source_warnings"
@@ -409,7 +569,13 @@ def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = 
 
     if not dry_run:
         sheet.values_clear([f"{SHEET_TABS['units']}!A1:X5000"])
-        sheet.values_update([{"range": f"{SHEET_TABS['units']}!A1", "values": current_rows}])
+        sheet.values_clear([f"{SHEET_TABS['source_status']}!A1:N1000"])
+        sheet.values_update(
+            [
+                {"range": f"{SHEET_TABS['units']}!A1", "values": current_rows},
+                {"range": f"{SHEET_TABS['source_status']}!A1", "values": source_status_rows},
+            ]
+        )
         sheet.values_append(f"{SHEET_TABS['history']}!A1", history_rows)
         sheet.values_append(f"{SHEET_TABS['alerts']}!A1", alert_rows)
         sheet.values_append(f"{SHEET_TABS['run_log']}!A1", [run_log_row])
@@ -456,9 +622,10 @@ def source_status_summary(results: list[SourceResult]) -> dict[str, Any]:
     return {
         "ok": sum(1 for r in results if r.status == "ok"),
         "ok_no_units": sum(1 for r in results if r.status == "ok_no_units"),
+        "manual_check": sum(1 for r in results if r.status == "manual_check"),
         "blocked_or_error": [
             {"building": r.building_name, "source": r.source_name, "status": r.status}
             for r in results
-            if r.status not in {"ok", "ok_no_units"}
+            if r.status not in {"ok", "ok_no_units", "manual_check"}
         ],
     }

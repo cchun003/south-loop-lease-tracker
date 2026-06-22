@@ -130,6 +130,7 @@ The tracker writes these Google Sheet tabs:
 - `Unit_History`: observed unit changes.
 - `Alerts`: sent or suppressed alert records with dedupe keys.
 - `Run_Log`: source status and run summary.
+- `Source_Status`: per-source latest status, units found, error reason, and action.
 - `Config`: runtime assumptions and thresholds.
 
 ## More Detail

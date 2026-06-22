@@ -43,8 +43,28 @@ def build_alert_message(unit: Unit, reason: str, alert_level: str, risk_tags: li
     )
 
 
+def build_source_recovered_message(
+    *,
+    building_name: str,
+    source_name: str,
+    previous_status: str,
+    current_status: str,
+    units_found: int,
+    target_units_found: int,
+    source_url: str,
+) -> str:
+    return "\n".join(
+        [
+            "ℹ️ **Lease Tracker 数据源恢复**",
+            f"> {building_name} | {source_name}",
+            f"> Status: {previous_status or 'unknown'} -> **{current_status}**",
+            f"> Units: {units_found} | Target 2B2B: {target_units_found}",
+            "[Open source](" + source_url + ")",
+        ]
+    )
+
+
 def fmt_layout(unit: Unit) -> str:
     beds = int(unit.beds) if unit.beds is not None and unit.beds == int(unit.beds) else unit.beds
     baths = int(unit.baths) if unit.baths is not None and unit.baths == int(unit.baths) else unit.baths
     return f"{beds}B{baths}B"
-

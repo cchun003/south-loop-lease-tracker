@@ -460,6 +460,22 @@ def sheet_rows():
         "errors",
         "notes",
     ]
+    source_status_headers = [
+        "source_key",
+        "observed_at",
+        "building_id",
+        "building_name",
+        "source_name",
+        "source_type",
+        "parser",
+        "status",
+        "units_found",
+        "target_units_found",
+        "error",
+        "url",
+        "action",
+        "notes",
+    ]
 
     return {
         "Buildings": [buildings_headers] + buildings,
@@ -468,6 +484,7 @@ def sheet_rows():
         "Alerts": [alerts_headers],
         "Config": [config_headers] + config_rows,
         "Run_Log": [run_log_headers],
+        "Source_Status": [source_status_headers],
     }
 
 
