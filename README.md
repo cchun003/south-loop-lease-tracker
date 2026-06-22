@@ -136,3 +136,5 @@ The tracker writes these Google Sheet tabs:
 ## More Detail
 
 See `outputs/lease_tracker_operations.md` for the full operations guide, including GitHub and macOS launchd setup.
+
+See `HANDOVER.md` for the full project handover, current status, known limitations, and maintenance checklist.
