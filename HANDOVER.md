@@ -217,33 +217,6 @@ Rows with `delivery_result = suppressed:no_alerts` are usually from intentional 
 - `manual_check_do_not_bypass`: blocked source; do not attempt challenge bypass
 - `inspect_source`: parser/fetch behavior needs review
 
-## Anti-Scrape Policy
-
-The tracker is intentionally conservative:
-
-- It uses low-volume ordinary HTTP requests.
-- It pauses between source requests.
-- It logs Cloudflare, 403, 429, and similar responses instead of bypassing them.
-- It does not use proxy rotation.
-- It does not solve CAPTCHA or Cloudflare challenges.
-- It does not automate logged-in social-media sessions.
-- It does not use Scrapling stealth/Cloudflare/proxy features.
-
-Manual-check links are there to support human inspection without turning the tracker into an access-control bypass tool.
-
-## Scrapling Probe
-
-Scrapling was evaluated as a possible optimizer.
-
-Result:
-
-- Not integrated.
-- The library's README advertises anti-bot, Cloudflare/Turnstile, proxy, and stealth capabilities.
-- The safe/static path was not a clean lightweight drop-in and pulled browser/fingerprint dependencies.
-- The blocked sources are blocked by access control rather than parser weakness.
-
-Future maintainers should avoid enabling Scrapling stealth, proxy, CAPTCHA, or challenge-solving modes in this project.
-
 ## Known Limitations
 
 Blocked / weak-coverage buildings:
