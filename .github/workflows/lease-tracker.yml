@@ -15,7 +15,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install Scrapling browser dependencies
+        run: scrapling install
+
       - name: Run tracker
         run: python tracker.py run-once
         env:
@@ -34,3 +37,9 @@ jobs:
           WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_ENABLED: ${{ vars.DEEPSEEK_ENABLED || '0' }}
+          SCRAPLING_ENABLED: ${{ vars.SCRAPLING_ENABLED || '1' }}
+          SCRAPLING_FETCHER: ${{ vars.SCRAPLING_FETCHER || 'stealthy' }}
+          SCRAPLING_SOLVE_CLOUDFLARE: ${{ vars.SCRAPLING_SOLVE_CLOUDFLARE || '1' }}
+          SCRAPLING_TIMEOUT_MS: ${{ vars.SCRAPLING_TIMEOUT_MS || '60000' }}
+          SCRAPLING_WAIT_MS: ${{ vars.SCRAPLING_WAIT_MS || '2500' }}
+          SCRAPLING_NETWORK_IDLE: ${{ vars.SCRAPLING_NETWORK_IDLE || '0' }}

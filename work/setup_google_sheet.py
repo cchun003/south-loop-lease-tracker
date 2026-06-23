@@ -442,6 +442,12 @@ def sheet_rows():
         ["gym_required", "true", ""],
         ["application_profile", "Two UChicago F-1 students; one may lack SSN", ""],
         ["alert_channel", "企业微信", "Webhook stored locally in .secrets/tracker.env."],
+        ["scrapling_enabled", "1", "Retry blocked public availability sources with Scrapling."],
+        ["scrapling_fetcher", "stealthy", "Default enhanced fetcher for blocked/challenged sources."],
+        ["scrapling_solve_cloudflare", "1", "Enable Scrapling Cloudflare handling on enhanced fetches."],
+        ["scrapling_wait_ms", "2500", "Extra browser wait for captured vendor availability APIs."],
+        ["scrapling_network_idle", "0", "Avoid waiting indefinitely on pages with tracking pings."],
+        ["enhanced_vendor_parsers", "SightMap, RentCafe/Yardi, Knock Doorway", "Captured APIs parsed from official building pages."],
         [
             "urgent_alert_rule",
             "top candidate 2B2B under hard cap; price drop; new availability; rare under preferred threshold",

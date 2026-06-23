@@ -38,11 +38,11 @@ Current Sheet state at the last verified handoff run:
 - `Run_Log`: 4 run rows
 - `Source_Status`: 24 configured source rows
 
-Current `Source_Status` breakdown:
+Current `Source_Status` breakdown before the Scrapling visibility upgrade:
 
 - `ok`: 5 automated sources return parseable availability
 - `ok_no_units`: 6 sources load but do not expose parseable unit rows
-- `blocked:http_403`: 8 sources return HTTP 403 / anti-bot or access-control responses
+- `blocked:http_403`: 8 sources returned HTTP 403 / access-control responses
 - `manual_check`: 5 manual backup links are recorded but not fetched automatically
 
 The five buildings currently producing parseable unit rows are:
@@ -66,7 +66,7 @@ lease_tracker/config.py
   Building list, source URLs, source parser mapping, risk tags, and manual-check links.
 
 lease_tracker/http_client.py
-  Low-volume urllib fetcher and block/challenge detector.
+  Low-volume urllib fetcher, block/challenge detector, and Scrapling enhanced-fetch fallback.
 
 lease_tracker/parsers.py
   Parsers for Spaces/RealPage-style embedded JSON, AMLI Next.js data, JSON-LD floorplans, and The Reed HTML tables.
@@ -98,11 +98,11 @@ deploy/launchd/
 The tracker writes these tabs:
 
 - `Buildings`: seeded building metadata and risk notes
-- `Units`: latest visible inventory
+- `Units`: latest visible inventory. `visibility_unconfirmed` means the source family was not observed in the latest run, so prior rows were retained instead of flipped to `unavailable`.
 - `Unit_History`: observed changes over time
 - `Alerts`: sent or suppressed alert records with dedupe keys
 - `Run_Log`: one row per run with aggregate status and errors
-- `Source_Status`: one row per configured source with latest `ok`, `ok_no_units`, `manual_check`, or `blocked:*` status
+- `Source_Status`: one row per configured source with latest `ok`, `ok_enhanced`, `ok_no_units`, `ok_no_units_enhanced`, `manual_check`, `blocked:*`, or `blocked_after_enhanced:*` status
 - `Config`: tracker assumptions and thresholds
 
 The Google Sheet ID is configured through `GOOGLE_SHEET_ID`.
@@ -128,6 +128,12 @@ GitHub Actions uses repository secrets:
 GitHub Actions uses this optional repository variable:
 
 - `DEEPSEEK_ENABLED`, default `0`
+- `SCRAPLING_ENABLED`, default `1`
+- `SCRAPLING_FETCHER`, default `stealthy`
+- `SCRAPLING_SOLVE_CLOUDFLARE`, default `1`
+- `SCRAPLING_TIMEOUT_MS`, default `60000`
+- `SCRAPLING_WAIT_MS`, default `2500`
+- `SCRAPLING_NETWORK_IDLE`, default `0`
 
 Important: the DeepSeek key was once pasted in chat during setup. Rotate it if this tracker continues to be used.
 
@@ -137,6 +143,7 @@ Install dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
+scrapling install
 ```
 
 Verify Google Sheet access:
@@ -195,7 +202,7 @@ It sends WeCom only when there is a meaningful event:
 - price drop
 - availability-date change
 - status change
-- source recovers from non-working to `ok`
+- source recovers from non-working to `ok` or `ok_enhanced`
 
 Rows with `delivery_result = suppressed:no_alerts` are usually from intentional baseline or rollout runs using `--no-alerts`. They record dedupe keys without sending WeCom messages.
 
@@ -204,28 +211,40 @@ Rows with `delivery_result = suppressed:no_alerts` are usually from intentional 
 `Source_Status.status` values:
 
 - `ok`: fetched and parsed usable units
+- `ok_enhanced`: primary HTTP fetch was blocked, then Scrapling recovered parseable units
 - `ok_no_units`: fetched successfully but no parseable units exposed
+- `ok_no_units_enhanced`: primary HTTP fetch was blocked, then Scrapling loaded content but no parseable units were exposed
 - `manual_check`: recorded link; not fetched automatically
-- `blocked:http_403`: blocked by HTTP 403 or challenge response
+- `blocked:http_403`: blocked by HTTP 403 or challenge response before enhanced fetch
+- `blocked_after_enhanced:http_403`: primary HTTP fetch was blocked and Scrapling still did not recover useful content
 - `fetch_error`: network or non-HTTP failure
 
 `Source_Status.action` values:
 
 - `working`: automated source is healthy
+- `working_enhanced`: Scrapling recovered a previously blocked source
 - `monitor_no_units`: source works but currently exposes no units
+- `monitor_enhanced_no_units`: Scrapling loaded the source, but parser coverage or current availability is still weak
 - `manual_check`: user should open the link manually
-- `manual_check_do_not_bypass`: blocked source; do not attempt challenge bypass
+- `enhanced_fetch_candidate`: blocked source eligible for Scrapling retry when enhanced fetching is enabled
+- `tune_enhanced_fetch_or_manual_check`: Scrapling retry still did not recover useful content
 - `inspect_source`: parser/fetch behavior needs review
 
 ## Known Limitations
 
-Blocked / weak-coverage buildings:
+Blocked / weak-coverage buildings before the Scrapling visibility upgrade:
 
 - 1401 S State: official and Apartments.com backup blocked; manual link recorded.
 - Arrive LEX: official and Apartments.com backup blocked or no-unit; manual link recorded.
 - Aspire: mixed blocked/no-unit; manual link recorded.
 - Roosevelt Collection Lofts: some sources load but only expose limited/no unit-level data; manual link recorded.
 - Grand Central / Alta Grand Central: official blocked; manual link recorded.
+
+Scrapling parser coverage added for enhanced visibility:
+
+- 1401 S State and Arrive LEX official pages: captured SightMap availability API.
+- Aspire official page: embedded RentCafe/Yardi `ysi.unitsList` availability.
+- Grand Central official page: captured Knock Doorway units API.
 
 Other limitations:
 

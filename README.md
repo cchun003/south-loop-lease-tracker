@@ -12,13 +12,14 @@ The tracker checks official apartment availability pages plus selected backup li
 - Urgent alert: estimated monthly rent at or below `$3,500`.
 - Change alerts: new unit, price drop, availability-date change, status change, or alert-level upgrade.
 
-## Safety Policy
+## Visibility Strategy
 
-This project intentionally avoids high-risk scraping behavior.
+This project uses a two-stage fetch strategy for public availability pages.
 
 - It uses low-volume ordinary HTTP requests with a fixed delay between sources.
-- It logs Cloudflare, 403, 429, and similar challenge pages as blocked.
-- It does not bypass anti-bot systems.
+- If a source returns Cloudflare, 403, 429, or a similar challenge response, it retries that source with Scrapling.
+- It captures vendor availability XHRs for parser visibility, including SightMap, RentCafe/Yardi, and Knock Doorway APIs.
+- It records whether Scrapling recovered parseable units, loaded the page without parseable units, or still could not retrieve useful content.
 - It does not automate logged-in social-media sessions.
 - Social-media research is represented as building risk tags and notes; production lease availability comes from official and backup listing sources.
 
@@ -41,6 +42,7 @@ Install dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
+scrapling install
 ```
 
 Create local secrets from the example:
@@ -62,6 +64,12 @@ Optional:
 ```bash
 DEEPSEEK_API_KEY=...
 DEEPSEEK_ENABLED=0
+SCRAPLING_ENABLED=1
+SCRAPLING_FETCHER=stealthy
+SCRAPLING_SOLVE_CLOUDFLARE=1
+SCRAPLING_TIMEOUT_MS=60000
+SCRAPLING_WAIT_MS=2500
+SCRAPLING_NETWORK_IDLE=0
 ```
 
 Keep `.secrets/` out of git.
@@ -112,6 +120,12 @@ Required repository secrets:
 Optional repository variable:
 
 - `DEEPSEEK_ENABLED`, default `0`
+- `SCRAPLING_ENABLED`, default `1`
+- `SCRAPLING_FETCHER`, default `stealthy`
+- `SCRAPLING_SOLVE_CLOUDFLARE`, default `1`
+- `SCRAPLING_TIMEOUT_MS`, default `60000`
+- `SCRAPLING_WAIT_MS`, default `2500`
+- `SCRAPLING_NETWORK_IDLE`, default `0`
 
 To create the service-account secret:
 
@@ -126,11 +140,11 @@ Paste the copied value into `GOOGLE_SERVICE_ACCOUNT_JSON_B64`.
 The tracker writes these Google Sheet tabs:
 
 - `Buildings`: pinned building metadata and notes.
-- `Units`: latest visible inventory.
+- `Units`: latest visible inventory. If a parser/source family is missed in a run, prior rows are retained as `visibility_unconfirmed` instead of being flipped to `unavailable`.
 - `Unit_History`: observed unit changes.
 - `Alerts`: sent or suppressed alert records with dedupe keys.
 - `Run_Log`: source status and run summary.
-- `Source_Status`: per-source latest status, units found, error reason, and action.
+- `Source_Status`: per-source latest status, units found, fetch strategy, error reason, and action.
 - `Config`: runtime assumptions and thresholds.
 
 ## More Detail

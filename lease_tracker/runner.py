@@ -8,7 +8,7 @@ from typing import Any
 from .config import BUILDING_BY_ID, BUILDINGS
 from .deepseek import maybe_summarize_alert
 from .google_sheets import GoogleSheetsClient, rows_to_dicts
-from .http_client import blocked_reason, fetch_url, polite_pause
+from .http_client import blocked_reason, fetch_url_with_enhancement, polite_pause
 from .models import SourceResult, Unit
 from .notifier import build_alert_message, build_source_recovered_message, send_wecom_markdown
 from .parsers import parse_units
@@ -128,7 +128,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def fetch_all_sources() -> list[SourceResult]:
+def fetch_all_sources(env: dict[str, str] | None = None) -> list[SourceResult]:
     results: list[SourceResult] = []
     for building in BUILDINGS:
         for source in building["sources"]:
@@ -146,7 +146,7 @@ def fetch_all_sources() -> list[SourceResult]:
                     )
                 )
                 continue
-            response = fetch_url(source["url"])
+            response = fetch_url_with_enhancement(source["url"], env=env)
             reason = blocked_reason(response.text, response.status_code)
             if response.error and not response.text:
                 results.append(
@@ -158,10 +158,13 @@ def fetch_all_sources() -> list[SourceResult]:
                         url=source["url"],
                         parser=source["parser"],
                         status="fetch_error",
-                        error=response.error,
+                        error=fetch_error_message(response.error, response.fetcher),
                     )
                 )
             elif reason:
+                status = f"blocked:{reason}"
+                if response.fetcher.startswith("scrapling:"):
+                    status = f"blocked_after_enhanced:{reason}"
                 results.append(
                     SourceResult(
                         building_id=building["id"],
@@ -170,8 +173,13 @@ def fetch_all_sources() -> list[SourceResult]:
                         source_type=source["type"],
                         url=source["url"],
                         parser=source["parser"],
-                        status=f"blocked:{reason}",
-                        error=f"HTTP {response.status_code}; {reason}",
+                        status=status,
+                        error=fetch_error_message(
+                            f"HTTP {response.status_code}; {reason}",
+                            response.fetcher,
+                            response.primary_blocked_reason,
+                            response.error,
+                        ),
                     )
                 )
             else:
@@ -183,6 +191,9 @@ def fetch_all_sources() -> list[SourceResult]:
                     source_type=source["type"],
                     text=response.text,
                 )
+                status = "ok" if units else "ok_no_units"
+                if response.fetcher.startswith("scrapling:"):
+                    status = "ok_enhanced" if units else "ok_no_units_enhanced"
                 results.append(
                     SourceResult(
                         building_id=building["id"],
@@ -191,12 +202,35 @@ def fetch_all_sources() -> list[SourceResult]:
                         source_type=source["type"],
                         url=source["url"],
                         parser=source["parser"],
-                        status="ok" if units else "ok_no_units",
+                        status=status,
                         units=units,
+                        error=fetch_error_message(
+                            response.error,
+                            response.fetcher,
+                            response.primary_blocked_reason,
+                        ),
                     )
                 )
             polite_pause()
     return results
+
+
+def fetch_error_message(
+    message: str,
+    fetcher: str,
+    primary_blocked_reason: str = "",
+    enhanced_note: str = "",
+) -> str:
+    parts = []
+    if fetcher and fetcher != "urllib":
+        parts.append(f"fetcher={fetcher}")
+    if primary_blocked_reason:
+        parts.append(f"primary_blocked={primary_blocked_reason}")
+    if message:
+        parts.append(message)
+    if enhanced_note and enhanced_note != message:
+        parts.append(enhanced_note)
+    return "; ".join(parts)
 
 
 def choose_units(results: list[SourceResult]) -> list[Unit]:
@@ -373,24 +407,36 @@ def source_key(result: SourceResult) -> str:
 def source_action(status: str) -> str:
     if status == "ok":
         return "working"
+    if status == "ok_enhanced":
+        return "working_enhanced"
     if status == "ok_no_units":
         return "monitor_no_units"
+    if status == "ok_no_units_enhanced":
+        return "monitor_enhanced_no_units"
     if status == "manual_check":
         return "manual_check"
+    if status.startswith("blocked_after_enhanced:"):
+        return "tune_enhanced_fetch_or_manual_check"
     if status.startswith("blocked:"):
-        return "manual_check_do_not_bypass"
+        return "enhanced_fetch_candidate"
     return "inspect_source"
 
 
 def source_notes(result: SourceResult) -> str:
     if result.status == "ok":
         return "Automated source returned parseable availability data."
+    if result.status == "ok_enhanced":
+        return "Scrapling recovered a source that the primary HTTP fetch marked blocked."
     if result.status == "ok_no_units":
         return "Page loaded, but no parseable unit rows were exposed to the tracker."
+    if result.status == "ok_no_units_enhanced":
+        return "Scrapling loaded the source after a primary block, but no parseable unit rows were exposed."
     if result.status == "manual_check":
         return "Manual-check backup link. The tracker does not fetch this source automatically."
+    if result.status.startswith("blocked_after_enhanced:"):
+        return "Primary HTTP fetch was blocked and Scrapling did not recover parseable page content."
     if result.status.startswith("blocked:"):
-        return "Blocked by access control or anti-bot response. Logged without bypassing."
+        return "Blocked by access control or anti-bot response before enhanced fetch."
     return "Fetch or parser needs review."
 
 
@@ -429,7 +475,11 @@ def source_recovery_alert_rows(
     for result in source_results:
         previous = existing_source_status.get(source_key(result), {})
         previous_status = previous.get("status", "")
-        recovered_to_units = result.status == "ok" and previous_status and previous_status != "ok"
+        recovered_to_units = (
+            result.status in {"ok", "ok_enhanced"}
+            and previous_status
+            and previous_status not in {"ok", "ok_enhanced"}
+        )
         if not recovered_to_units:
             continue
         target_units = sum(1 for unit in result.units if unit.is_target_layout())
@@ -469,12 +519,12 @@ def source_recovery_alert_rows(
 
 def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = True) -> TrackerRunResult:
     started = now_iso()
-    source_results = fetch_all_sources()
+    source_results = fetch_all_sources(env)
     units = choose_units(source_results)
     errors = [
         f"{r.building_name}/{r.source_name}: {r.status} {r.error}".strip()
         for r in source_results
-        if r.status not in {"ok", "ok_no_units", "manual_check"}
+        if r.status not in {"ok", "ok_enhanced", "ok_no_units", "ok_no_units_enhanced", "manual_check"}
     ]
 
     sheet = GoogleSheetsClient.from_env(env)
@@ -534,7 +584,12 @@ def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = 
                     ]
                 )
 
-    unavailable_rows = unavailable_existing_rows(existing_units, {u.unit_key for u in units}, current_time)
+    unavailable_rows = unavailable_existing_rows(
+        existing_units,
+        {u.unit_key for u in units},
+        current_time,
+        source_results,
+    )
     current_rows.extend(unavailable_rows)
     source_status_rows = [SOURCE_STATUS_HEADERS] + [
         source_status_row(current_time, result) for result in source_results
@@ -595,13 +650,37 @@ def run_once(env: dict[str, str], *, dry_run: bool = False, send_alerts: bool = 
     )
 
 
-def unavailable_existing_rows(existing_units: dict[str, dict[str, str]], seen_keys: set[str], current_time: str) -> list[list[Any]]:
+def unavailable_existing_rows(
+    existing_units: dict[str, dict[str, str]],
+    seen_keys: set[str],
+    current_time: str,
+    source_results: list[SourceResult],
+) -> list[list[Any]]:
+    observed_families = observed_unit_families(source_results)
     rows: list[list[Any]] = []
     for key, existing in sorted(existing_units.items()):
         if key in seen_keys:
             continue
         if existing.get("status") == "unavailable":
             rows.append([existing.get(header, "") for header in UNIT_HEADERS])
+            continue
+        building_id = existing.get("building_id", "")
+        family = unit_source_family(key)
+        if family and (building_id, family) not in observed_families:
+            row = []
+            for header in UNIT_HEADERS:
+                if header == "status":
+                    row.append("visibility_unconfirmed")
+                elif header == "notes":
+                    row.append(
+                        append_note_once(
+                            existing.get("notes", ""),
+                            "source family not observed in latest run; retained to avoid false unavailable",
+                        )
+                    )
+                else:
+                    row.append(existing.get(header, ""))
+            rows.append(row)
             continue
         row = []
         for header in UNIT_HEADERS:
@@ -618,14 +697,42 @@ def unavailable_existing_rows(existing_units: dict[str, dict[str, str]], seen_ke
     return rows
 
 
+def observed_unit_families(results: list[SourceResult]) -> set[tuple[str, str]]:
+    families: set[tuple[str, str]] = set()
+    for result in results:
+        for unit in result.units:
+            family = unit_source_family(unit.unit_key)
+            if family:
+                families.add((unit.building_id, family))
+    return families
+
+
+def unit_source_family(unit_key: str) -> str:
+    parts = unit_key.split(":")
+    if len(parts) < 2:
+        return ""
+    family = parts[1]
+    if family.startswith("rentcafe"):
+        return "rentcafe"
+    return family
+
+
+def append_note_once(note: str, addition: str) -> str:
+    if addition in note:
+        return note
+    return (note + " | " + addition).strip(" |")
+
+
 def source_status_summary(results: list[SourceResult]) -> dict[str, Any]:
     return {
         "ok": sum(1 for r in results if r.status == "ok"),
+        "ok_enhanced": sum(1 for r in results if r.status == "ok_enhanced"),
         "ok_no_units": sum(1 for r in results if r.status == "ok_no_units"),
+        "ok_no_units_enhanced": sum(1 for r in results if r.status == "ok_no_units_enhanced"),
         "manual_check": sum(1 for r in results if r.status == "manual_check"),
         "blocked_or_error": [
             {"building": r.building_name, "source": r.source_name, "status": r.status}
             for r in results
-            if r.status not in {"ok", "ok_no_units", "manual_check"}
+            if r.status not in {"ok", "ok_enhanced", "ok_no_units", "ok_no_units_enhanced", "manual_check"}
         ],
     }

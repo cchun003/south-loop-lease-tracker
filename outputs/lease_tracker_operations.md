@@ -7,21 +7,23 @@
 - Urgent: target 2B2B units with estimated monthly rent <= $3,500.
 - Alerts: new unit, price drop, availability-date change, status change, or alert-level upgrade/new qualifying unit.
 - Backup sources are included, but official sources are preferred when both exist.
-- Blocked/challenged pages are logged instead of bypassed.
-- `Source_Status` records each configured source as `ok`, `ok_no_units`, `manual_check`, or `blocked:*`.
+- Blocked/challenged pages are retried with Scrapling for better visibility.
+- `Source_Status` records each configured source as `ok`, `ok_enhanced`, `ok_no_units`, `ok_no_units_enhanced`, `manual_check`, `blocked:*`, or `blocked_after_enhanced:*`.
+- `Units.status = visibility_unconfirmed` means a source family was missed in the latest scan and prior units were retained to avoid false unavailable flips.
 
 ## Local Commands
 
 Run from:
 
 ```bash
-cd /Users/chenchun/Documents/Codex/2026-06-17/files-mentioned-by-the-user-south
+cd /path/to/south-loop-lease-tracker
 ```
 
 Install dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
+scrapling install
 ```
 
 Verify Google Sheets access:
@@ -73,6 +75,12 @@ Optional:
 ```bash
 DEEPSEEK_API_KEY=...
 DEEPSEEK_ENABLED=0
+SCRAPLING_ENABLED=1
+SCRAPLING_FETCHER=stealthy
+SCRAPLING_SOLVE_CLOUDFLARE=1
+SCRAPLING_TIMEOUT_MS=60000
+SCRAPLING_WAIT_MS=2500
+SCRAPLING_NETWORK_IDLE=0
 ```
 
 Keep `DEEPSEEK_ENABLED=0` unless you want the alert text rewritten by DeepSeek. The default alert text already includes the Chinese decision fields and English building/unit names.
@@ -100,6 +108,11 @@ Paste the clipboard value into `GOOGLE_SERVICE_ACCOUNT_JSON_B64`.
 
 ```text
 DEEPSEEK_ENABLED=0
+SCRAPLING_ENABLED=1
+SCRAPLING_FETCHER=stealthy
+SCRAPLING_SOLVE_CLOUDFLARE=1
+SCRAPLING_WAIT_MS=2500
+SCRAPLING_NETWORK_IDLE=0
 ```
 
 6. The workflow file is `.github/workflows/lease-tracker.yml`.
@@ -134,10 +147,12 @@ Stop it:
 launchctl unload ~/Library/LaunchAgents/com.chenchun.lease-tracker.plist
 ```
 
-## Anti-Scrape Policy
+## Enhanced Fetch Policy
 
-- The tracker uses low-volume ordinary HTTP requests, a fixed delay between source requests, and no credentialed scraping.
-- It records Cloudflare/403/429 pages as blocked instead of attempting to bypass them.
-- It does not automate 小红书, Facebook, Reddit login sessions, or high-risk browser scraping in the production loop.
+- The tracker first uses low-volume ordinary HTTP requests with a fixed delay between source requests.
+- When a public availability source returns Cloudflare/403/429/challenge content, it retries that source with Scrapling.
+- Scrapling defaults to `StealthyFetcher` with Cloudflare solving enabled, captured XHR appended for parser visibility, and no credentials.
+- Enhanced parsers consume captured SightMap, RentCafe/Yardi, and Knock Doorway availability APIs when those interfaces are exposed by official building pages.
+- It does not automate 小红书, Facebook, Reddit login sessions in the production loop.
 - Social-media findings are folded into building risk tags and notes; lease availability comes from official/backup apartment listing sources.
-- Manual-check backup links are stored for blocked sources, but the tracker does not use proxy rotation, CAPTCHA solving, or challenge bypass.
+- Manual-check backup links remain stored for sources that need human inspection after enhanced fetching.

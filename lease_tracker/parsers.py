@@ -26,6 +26,12 @@ def parse_units(
         return parse_amli_next(building_id, building_name, source_url, source_type, text)
     if parser_name == "jsonld_floorplans":
         return parse_jsonld_floorplans(building_id, building_name, source_url, source_type, text)
+    if parser_name == "sightmap":
+        return parse_sightmap(building_id, building_name, source_url, source_type, text)
+    if parser_name == "rentcafe_ysi":
+        return parse_rentcafe_ysi(building_id, building_name, source_url, source_type, text)
+    if parser_name == "knock_doorway":
+        return parse_knock_doorway(building_id, building_name, source_url, source_type, text)
     if parser_name == "reed_html":
         return parse_reed_html(building_id, building_name, source_url, source_type, text)
     return []
@@ -98,6 +104,76 @@ def extract_balanced_value(text: str, start: int) -> tuple[str, int] | None:
 
 def json_loads_relaxed(raw: str) -> Any:
     return json.loads(raw)
+
+
+def clean_display_text(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    return re.sub(r"\s+", " ", BeautifulSoup(html.unescape(str(value)), "html.parser").get_text(" ", strip=True))
+
+
+def first_money(*values: Any) -> int | None:
+    for value in values:
+        money = parse_money_min(value)
+        if money is not None:
+            return money
+    return None
+
+
+def parse_money_min(value: Any) -> int | None:
+    if isinstance(value, (list, tuple)):
+        parsed = [parse_money_min(item) for item in value]
+        parsed = [item for item in parsed if item is not None]
+        return min(parsed) if parsed else None
+    return parse_money(value)
+
+
+def normalize_date_value(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    text = str(value)
+    match = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+    return match.group(1) if match else text
+
+
+def is_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def iter_scrapling_captured_xhr(text: str) -> Iterable[tuple[str, str]]:
+    marker = re.compile(r"<!-- scrapling captured_xhr: (.*?) -->\n", re.S)
+    matches = list(marker.finditer(text))
+    for idx, match in enumerate(matches):
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        yield match.group(1).strip(), text[match.end() : end].strip()
+
+
+def iter_scrapling_captured_json(text: str, url_pattern: str | None = None) -> Iterable[tuple[str, Any]]:
+    pattern = re.compile(url_pattern, re.I) if url_pattern else None
+    for url, body in iter_scrapling_captured_xhr(text):
+        if pattern and not pattern.search(url):
+            continue
+        try:
+            yield url, json.loads(body)
+        except Exception:
+            continue
+
+
+def extract_js_assignment(text: str, name: str) -> Any | None:
+    for match in re.finditer(re.escape(name) + r"\s*=", text):
+        extracted = extract_balanced_value(text, match.end())
+        if not extracted:
+            continue
+        raw_json, _ = extracted
+        try:
+            return json_loads_relaxed(raw_json)
+        except Exception:
+            continue
+    return None
 
 
 def token_number(css: Iterable[str], suffix: str) -> float | None:
@@ -342,6 +418,244 @@ def parse_jsonld_floorplans(
                         raw={"source": "jsonld_floorplans", "record": plan},
                     )
                 )
+    return units
+
+
+def sightmap_floorplan_name(plan: dict[str, Any]) -> str:
+    for value in (plan.get("filter_label"), plan.get("name"), plan.get("id")):
+        if value is None or value == "":
+            continue
+        text = str(value)
+        if text.startswith("{"):
+            try:
+                decoded = json.loads(text)
+                if decoded.get("name"):
+                    return str(decoded["name"])
+            except Exception:
+                pass
+        return text
+    return ""
+
+
+def parse_sightmap(
+    building_id: str,
+    building_name: str,
+    source_url: str,
+    source_type: str,
+    text: str,
+) -> list[Unit]:
+    units: list[Unit] = []
+    seen = set()
+    for url, payload in iter_scrapling_captured_json(text, r"sightmap\.com/.*/api/"):
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("units"), list):
+            continue
+        floorplans = {
+            str(plan.get("id")): plan
+            for plan in data.get("floor_plans") or []
+            if isinstance(plan, dict) and plan.get("id") is not None
+        }
+        for raw_unit in data.get("units") or []:
+            if not isinstance(raw_unit, dict):
+                continue
+            unit_id = str(raw_unit.get("id") or "")
+            unit_no = str(raw_unit.get("unit_number") or raw_unit.get("label") or unit_id)
+            key = f"{building_id}:sightmap:{unit_id or unit_no}"
+            if key in seen:
+                continue
+            seen.add(key)
+            plan = floorplans.get(str(raw_unit.get("floor_plan_id")), {})
+            base_rent = first_money(raw_unit.get("price"), raw_unit.get("display_price"))
+            total_rent = first_money(
+                raw_unit.get("total_price"),
+                raw_unit.get("total_display_price"),
+                raw_unit.get("display_full_price"),
+                raw_unit.get("total_display_full_price"),
+                raw_unit.get("price"),
+                raw_unit.get("display_price"),
+            )
+            fee_note = ""
+            total_display = clean_display_text(raw_unit.get("total_display_price"))
+            if total_display and total_rent and total_rent != base_rent:
+                fee_note = f"Source total rent display: {total_display}."
+            units.append(
+                Unit(
+                    unit_key=key,
+                    building_id=building_id,
+                    building_name=building_name,
+                    unit=unit_no,
+                    floorplan=sightmap_floorplan_name(plan),
+                    beds=parse_float(plan.get("bedroom_count")),
+                    baths=parse_float(plan.get("bathroom_count")),
+                    sqft=parse_int(raw_unit.get("area")),
+                    base_rent=base_rent,
+                    estimated_total_rent=total_rent or base_rent,
+                    available_date=normalize_date_value(raw_unit.get("available_on")),
+                    lease_term=str(raw_unit.get("display_lease_term") or ""),
+                    concessions=clean_display_text(raw_unit.get("specials_description")),
+                    fees_notes=fee_note,
+                    source_url=source_url,
+                    source_type=source_type,
+                    notes="SightMap captured availability API via Scrapling.",
+                    raw={"source": "sightmap", "api_url": url, "record": raw_unit, "floorplan": plan},
+                )
+            )
+    return units
+
+
+def parse_rentcafe_ysi(
+    building_id: str,
+    building_name: str,
+    source_url: str,
+    source_type: str,
+    text: str,
+) -> list[Unit]:
+    raw_floorplans = extract_js_assignment(text, "ysi.floorplansList") or []
+    raw_units = extract_js_assignment(text, "ysi.unitsList") or []
+    floorplans = {
+        str(plan.get("Id")): plan
+        for plan in raw_floorplans
+        if isinstance(plan, dict) and plan.get("Id") is not None
+    }
+    units: list[Unit] = []
+    seen = set()
+
+    for raw_unit in raw_units:
+        if not isinstance(raw_unit, dict) or is_truthy(raw_unit.get("isCommercial")):
+            continue
+        unit_id = str(raw_unit.get("Id") or "")
+        unit_no = str(raw_unit.get("UnitCode") or unit_id)
+        key = f"{building_id}:rentcafe:{unit_id or unit_no}"
+        if key in seen:
+            continue
+        seen.add(key)
+        plan = floorplans.get(str(raw_unit.get("FloorplanId")), {})
+        base_rent = first_money(raw_unit.get("MinRent"), raw_unit.get("Rentmin"))
+        concessions = "Specials marked by source." if is_truthy(raw_unit.get("HasSpecials")) else ""
+        units.append(
+            Unit(
+                unit_key=key,
+                building_id=building_id,
+                building_name=building_name,
+                unit=unit_no,
+                floorplan=str(raw_unit.get("FloorplanName") or raw_unit.get("FloorplanId") or ""),
+                beds=parse_float(raw_unit.get("Beds") or plan.get("Beds")),
+                baths=parse_float(raw_unit.get("Baths") or plan.get("Baths")),
+                sqft=parse_int(raw_unit.get("SqFt") or plan.get("MinSqFt") or plan.get("MaxSqFt")),
+                base_rent=base_rent,
+                estimated_total_rent=base_rent,
+                available_date=normalize_date_value(raw_unit.get("AvailableDate")),
+                concessions=concessions,
+                fees_notes="RentCafe/Yardi min rent used.",
+                source_url=source_url,
+                source_type=source_type,
+                notes="RentCafe/Yardi embedded ysi.unitsList availability.",
+                raw={"source": "rentcafe_ysi", "record": raw_unit, "floorplan": plan},
+            )
+        )
+
+    if units:
+        return units
+
+    for plan in raw_floorplans:
+        if not isinstance(plan, dict) or is_truthy(plan.get("isCommercial")):
+            continue
+        available_count = parse_int(plan.get("AvailableCount"))
+        if not available_count:
+            continue
+        plan_id = str(plan.get("Id") or "")
+        key = f"{building_id}:rentcafe_floorplan:{plan_id}"
+        base_rent = first_money(plan.get("MinRent"), plan.get("Rentmin"))
+        units.append(
+            Unit(
+                unit_key=key,
+                building_id=building_id,
+                building_name=building_name,
+                unit=f"floorplan-{plan_id}",
+                floorplan=plan_id,
+                beds=parse_float(plan.get("Beds")),
+                baths=parse_float(plan.get("Baths")),
+                sqft=parse_int(plan.get("MinSqFt") or plan.get("MaxSqFt")),
+                base_rent=base_rent,
+                estimated_total_rent=base_rent,
+                available_date=normalize_date_value(plan.get("AvailableDate")),
+                concessions="Specials marked by source." if is_truthy(plan.get("HasSpecials")) else "",
+                fees_notes="RentCafe/Yardi floorplan-level min rent used.",
+                source_url=source_url,
+                source_type=source_type,
+                status=f"available_count:{available_count}",
+                notes="RentCafe/Yardi embedded ysi.floorplansList availability; unit rows were unavailable.",
+                raw={"source": "rentcafe_ysi_floorplan", "record": plan},
+            )
+        )
+    return units
+
+
+def parse_knock_doorway(
+    building_id: str,
+    building_name: str,
+    source_url: str,
+    source_type: str,
+    text: str,
+) -> list[Unit]:
+    units: list[Unit] = []
+    seen = set()
+    payloads: list[tuple[str, Any]] = []
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            payloads.append((source_url, payload))
+    except Exception:
+        pass
+    payloads.extend(iter_scrapling_captured_json(text, r"(doorway-api|knockrentals)"))
+    for url, payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        units_data = payload.get("units_data")
+        if not isinstance(units_data, dict) or not isinstance(units_data.get("units"), list):
+            continue
+        layouts = {
+            str(layout.get("id")): layout
+            for layout in units_data.get("layouts") or []
+            if isinstance(layout, dict) and layout.get("id") is not None
+        }
+        for raw_unit in units_data.get("units") or []:
+            if not isinstance(raw_unit, dict):
+                continue
+            if not is_truthy(raw_unit.get("available")):
+                continue
+            if is_truthy(raw_unit.get("hidden")) or is_truthy(raw_unit.get("leased")) or raw_unit.get("deletedAt"):
+                continue
+            unit_id = str(raw_unit.get("id") or "")
+            unit_no = str(raw_unit.get("name") or unit_id)
+            key = f"{building_id}:knock:{unit_id or unit_no}"
+            if key in seen:
+                continue
+            seen.add(key)
+            layout = layouts.get(str(raw_unit.get("layoutId")), {})
+            base_rent = first_money(raw_unit.get("knockPrice"), raw_unit.get("price"), raw_unit.get("displayPrice"))
+            units.append(
+                Unit(
+                    unit_key=key,
+                    building_id=building_id,
+                    building_name=building_name,
+                    unit=unit_no,
+                    floorplan=str(raw_unit.get("layoutName") or layout.get("name") or ""),
+                    beds=parse_float(raw_unit.get("bedrooms") or layout.get("bedrooms")),
+                    baths=parse_float(raw_unit.get("bathrooms") or layout.get("bathrooms")),
+                    sqft=parse_int(raw_unit.get("area") or layout.get("area")),
+                    base_rent=base_rent,
+                    estimated_total_rent=base_rent,
+                    available_date=normalize_date_value(raw_unit.get("availableOn")),
+                    source_url=source_url,
+                    source_type=source_type,
+                    status="reserved" if is_truthy(raw_unit.get("reserved")) else "available",
+                    notes="Knock Doorway captured units API via Scrapling.",
+                    raw={"source": "knock_doorway", "api_url": url, "record": raw_unit, "layout": layout},
+                )
+            )
     return units
 
 

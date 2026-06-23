@@ -58,7 +58,7 @@ BUILDINGS = [
                 "name": "official",
                 "type": "official",
                 "url": "https://www.1401southstate.com/chicago/1401-s-state/2-bedroom-apartments/",
-                "parser": "jsonld_floorplans",
+                "parser": "sightmap",
             },
             {
                 "name": "apartments_backup",
@@ -136,7 +136,7 @@ BUILDINGS = [
                 "name": "official",
                 "type": "official",
                 "url": "https://www.aspiresouthloop.com/floorplans/",
-                "parser": "jsonld_floorplans",
+                "parser": "rentcafe_ysi",
             },
             {
                 "name": "apartments_backup",
@@ -170,7 +170,7 @@ BUILDINGS = [
                 "name": "official",
                 "type": "official",
                 "url": "https://arrivelex.prospectportal.com/chicago-il-apartments/arrive-lex/conventional/",
-                "parser": "jsonld_floorplans",
+                "parser": "sightmap",
             },
             {
                 "name": "apartments_backup",
@@ -233,10 +233,16 @@ BUILDINGS = [
         "risk_tags": ["highway/interchange noise", "F-1 path unverified", "parking unconfirmed"],
         "sources": [
             {
+                "name": "official_units_api",
+                "type": "official",
+                "url": "https://doorway-api.knockrentals.com/v1/property/2032333/units",
+                "parser": "knock_doorway",
+            },
+            {
                 "name": "official",
                 "type": "official",
                 "url": "https://www.thegrandcentralapartments.com/floorplans/",
-                "parser": "jsonld_floorplans",
+                "parser": "knock_doorway",
             },
             {
                 "name": "apartmentguide_manual",
