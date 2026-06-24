@@ -43,3 +43,18 @@ jobs:
           SCRAPLING_TIMEOUT_MS: ${{ vars.SCRAPLING_TIMEOUT_MS || '60000' }}
           SCRAPLING_WAIT_MS: ${{ vars.SCRAPLING_WAIT_MS || '2500' }}
           SCRAPLING_NETWORK_IDLE: ${{ vars.SCRAPLING_NETWORK_IDLE || '0' }}
+
+      - name: Sync WeCom document mirror
+        run: |
+          if [ -z "$WECOM_UNITS_WEBHOOK_URL" ] || [ -z "$WECOM_SOURCE_STATUS_WEBHOOK_URL" ] || [ -z "$WECOM_RUN_LOG_WEBHOOK_URL" ]; then
+            echo "Skipping WeCom document mirror sync; sync secrets are not configured."
+            exit 0
+          fi
+          python tracker.py wecom-doc-sync
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
+          WECOM_UNITS_WEBHOOK_URL: ${{ secrets.WECOM_UNITS_WEBHOOK_URL }}
+          WECOM_SOURCE_STATUS_WEBHOOK_URL: ${{ secrets.WECOM_SOURCE_STATUS_WEBHOOK_URL }}
+          WECOM_RUN_LOG_WEBHOOK_URL: ${{ secrets.WECOM_RUN_LOG_WEBHOOK_URL }}
+          WECOM_WEBHOOK_SYNC_ALLOW_BOOTSTRAP: ${{ vars.WECOM_WEBHOOK_SYNC_ALLOW_BOOTSTRAP || '0' }}
