@@ -17,7 +17,7 @@ from .query_setup import (
 )
 from .runner import run_once
 from .settings import DEFAULT_ENV_PATH
-from .wecom_doc_sync import sync_google_sheet_to_wecom_doc
+from .wecom_doc_sync import BootstrapRequiredError, sync_google_sheet_to_wecom_doc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -127,8 +127,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if critical_ok else 2
 
     if args.command == "wecom-doc-sync":
-        results = sync_google_sheet_to_wecom_doc(env)
-        print(json.dumps([result.__dict__ for result in results], ensure_ascii=False, indent=2))
+        try:
+            results = sync_google_sheet_to_wecom_doc(env)
+            payload = [result.__dict__ for result in results]
+        except BootstrapRequiredError as exc:
+            payload = {"status": "skipped_bootstrap_required", "reason": str(exc)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
     return 1

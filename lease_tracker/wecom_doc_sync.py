@@ -46,6 +46,10 @@ class WeComDocSyncResult:
     skipped_records: int
 
 
+class BootstrapRequiredError(RuntimeError):
+    pass
+
+
 TAB_CONFIGS = [
     WebhookTabConfig(
         tab="Units",
@@ -131,7 +135,7 @@ def sync_google_sheet_to_wecom_doc(env: dict[str, str]) -> list[WeComDocSyncResu
     google.ensure_sheet(MAP_TAB)
     record_map = load_record_map(google)
     if not record_map and not allow_bootstrap:
-        raise RuntimeError(
+        raise BootstrapRequiredError(
             f"{MAP_TAB} is empty. To avoid duplicating the existing WeCom mirror, "
             "clear the WeCom mirror rows or create a fresh empty mirror, then run once "
             "with WECOM_WEBHOOK_SYNC_ALLOW_BOOTSTRAP=1."
