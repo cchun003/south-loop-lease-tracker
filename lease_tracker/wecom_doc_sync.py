@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import socket
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -14,6 +16,9 @@ from .settings import SHEET_TABS
 
 
 CHUNK_SIZE = 200
+WEBHOOK_MAX_ATTEMPTS = 4
+WEBHOOK_RETRY_BASE_SECONDS = 5
+WEBHOOK_TIMEOUT_SECONDS = 45
 MAP_TAB = "WeCom_Record_Map"
 MAP_HEADERS = ["tab", "row_key", "record_id", "source_hash", "last_synced_at"]
 T = TypeVar("T")
@@ -280,21 +285,42 @@ def update_records(
 
 
 def post_webhook(webhook_url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    request = urllib.request.Request(
-        webhook_url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=45) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"WeCom webhook HTTP {exc.code}: {body}") from exc
-    if data.get("errcode") != 0:
-        raise RuntimeError(f"WeCom webhook returned error: {data}")
-    return data
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    for attempt in range(1, WEBHOOK_MAX_ATTEMPTS + 1):
+        request = urllib.request.Request(
+            webhook_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=WEBHOOK_TIMEOUT_SECONDS) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", errors="replace")
+            if is_retriable_http_status(exc.code) and attempt < WEBHOOK_MAX_ATTEMPTS:
+                sleep_before_retry(attempt)
+                continue
+            raise RuntimeError(f"WeCom webhook HTTP {exc.code}: {response_body}") from exc
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+            if attempt < WEBHOOK_MAX_ATTEMPTS:
+                sleep_before_retry(attempt)
+                continue
+            raise RuntimeError(
+                f"WeCom webhook request failed after {WEBHOOK_MAX_ATTEMPTS} attempts: {exc}"
+            ) from exc
+        if data.get("errcode") != 0:
+            raise RuntimeError(f"WeCom webhook returned error: {data}")
+        return data
+    raise RuntimeError("WeCom webhook request failed without a response.")
+
+
+def is_retriable_http_status(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code <= 599
+
+
+def sleep_before_retry(attempt: int) -> None:
+    time.sleep(WEBHOOK_RETRY_BASE_SECONDS * attempt)
 
 
 def row_to_webhook_values(row: dict[str, str], schema: tuple[FieldSpec, ...]) -> dict[str, Any]:

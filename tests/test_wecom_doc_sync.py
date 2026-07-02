@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import urllib.error
 import unittest
+from unittest.mock import patch
 
 from lease_tracker.wecom_doc_sync import (
     FieldSpec,
     TAB_CONFIGS,
     convert_cell_value,
+    post_webhook,
     row_to_webhook_values,
     validate_schema,
 )
@@ -45,6 +48,30 @@ class WeComDocSyncTest(unittest.TestCase):
         headers[1] = "renamed_building_id"
         with self.assertRaisesRegex(RuntimeError, "schema mismatch"):
             validate_schema(units, headers)
+
+    def test_post_webhook_retries_transient_url_errors(self) -> None:
+        class Response:
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"errcode": 0, "errmsg": "ok"}'
+
+        with (
+            patch(
+                "lease_tracker.wecom_doc_sync.urllib.request.urlopen",
+                side_effect=[urllib.error.URLError(TimeoutError("timed out")), Response()],
+            ) as urlopen,
+            patch("lease_tracker.wecom_doc_sync.time.sleep") as sleep,
+        ):
+            result = post_webhook("https://example.test/webhook", {"update_records": []})
+
+        self.assertEqual(result["errcode"], 0)
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once()
 
 
 if __name__ == "__main__":
